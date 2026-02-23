@@ -68,12 +68,10 @@ LIBRARIES=$(
 [ -z "$VERSION" ] && [ -d ".git" ] && [ -n "$(which git 2>/dev/null)" ] &&
   VERSION="$(git describe --tags --abbrev=12 2>/dev/null)"
 
-# Set/record build environment information
+# build environment information
 compflags()
 {
   # The #d lines tag dependencies that force full rebuild if changed
-  echo '#!/bin/sh'
-  echo
   echo "VERSION='$VERSION'"
   echo "LIBRARIES='$LIBRARIES'"
   echo "BUILD='${CROSS_COMPILE}${CC} $CFLAGS -I . $OPTIMIZE" \
@@ -84,10 +82,10 @@ compflags()
 }
 
 # Make sure rm -rf isn't gonna go funny
-B="$(readlink -f "$PWD")/" A="$(readlink -f "$GENDIR")" A="${A%/}"/
+B="$(readlink -f "$PWD")/" A="$(readlink -f "$UNSTRIPPED")" A="${A%/}"/
 [ "$A" == "${B::${#A}}" ] &&
-  { echo "\$GENDIR=$GENDIR cannot include \$PWD=$PWD"; exit 1; }
-unset A B DOTPROG DIDNEWER
+  { echo "\$UNSTRIPPED=$UNSTRIPPED cannot include \$PWD=$PWD"; exit 1; }
+unset A B DOTPROG
 
 # Force full rebuild if our compiler/linker options changed
 OBJDIR="$UNSTRIPPED/obj"
@@ -108,13 +106,13 @@ then
 fi
 
 # Write build variables (and set them locally), then append build invocation.
-compflags > "$GENDIR"/build.sh && source "$GENDIR/build.sh" &&
-  {
-    echo FILES=$'"\n'"$(fold -s <<<"$TOYFILES")"$'\n"' &&
-    echo &&
-    echo -e "\$BUILD lib/*.c \$FILES \$LINK -o $OUTNAME"
-  } >> "$GENDIR"/build.sh &&
-  chmod +x "$GENDIR"/build.sh || exit 1
+COMPFLAGS="$(compflags)" && eval "$COMPFLAGS" &&
+{
+  echo $'#!/bin/sh\n'
+  echo "$COMPFLAGS"
+  echo FILES=$'"\n'"$(fold -s <<<"$TOYFILES")"$'\n"\n' &&
+  echo -e "\$BUILD lib/*.c \$FILES \$LINK -o $OUTNAME"
+} >> "$GENDIR"/build.sh && chmod +x "$GENDIR"/build.sh || exit 1
 
 # newtoys.h is a list of USE_XXX(NEWTOY(xxx...)) lines, one per command.
 { # The multiplexer is the first element in the array
@@ -135,44 +133,32 @@ $SED -En $KCONFIG_CONFIG > "$GENDIR"/config.h \
 # allow multiple NEWTOY() in the same C file. (When disabled the FLAG is 0,
 # so flags&0 becomes a constant 0 allowing dead code elimination.)
 
-if true
-then
-  # Parse files through C preprocessor twice, once to get flags for current
-  # .config and once to get flags for allyesconfig
-  for I in A B
-  do
-    (
-    # define macros and select header files with option string data
-
+# Parse files through C preprocessor twice, once to get flags for current
+# .config and once to get flags for allyesconfig
+for I in A B; do {
     echo "#define NEWTOY(aa,bb,cc) aa $I bb"
-    echo '#define OLDTOY(...)'
+    echo -e '#define OLDTOY(...)\n#include "lib/toyflags.h"'
     if [ "$I" == A ]
     then
       cat "$GENDIR"/config.h
     else
       $SED -E '/(USE|SKIP)_.*\([^)]*\)$/s/$/ __VA_ARGS__/' "$GENDIR"/config.h
     fi
-    echo '#include "lib/toyflags.h"'
     cat "$GENDIR"/newtoys.h
+  } | ${CROSS_COMPILE}${CC} -E -
 
-    # Run result through preprocessor, glue together " " gaps leftover from USE
-    # macros, delete comment lines, print any line with a quoted optstring,
-    # turn any non-quoted opstring (NULL or 0) into " " (because fscanf can't
-    # handle "" with nothing in it, and mkflags uses that).
+# Glue together " " gaps leftover from USE macros, delete comment lines,
+# print any line with a quoted optstring else print " " (for fscanf),
+# sort resulting line pairs and glue them together into triplets of
+#   command "flags" "allflags"
+# to feed into mkflags C program that outputs actual flag macros
+# If no pair (because command's disabled in config), use " " for flags
+# so allflags can define the appropriate zero macros.
 
-    ) | ${CROSS_COMPILE}${CC} -E - | \
-    $SED -n -e 's/" *"//g;/^#/d;t clear;:clear;s/"/"/p;t;s/\( [AB] \).*/\1 " "/p'
-
-  # Sort resulting line pairs and glue them together into triplets of
-  #   command "flags" "allflags"
-  # to feed into mkflags C program that outputs actual flag macros
-  # If no pair (because command's disabled in config), use " " for flags
-  # so allflags can define the appropriate zero macros.
-
-  done | sort -s | $SED -n -e 's/ A / /;t pair;h;s/\([^ ]*\).*/\1 " "/;x' \
-    -e 'b single;:pair;h;n;:single;s/[^ ]* B //;H;g;s/\n/ /;p' | \
-    brun mkflags > "$GENDIR"/flags.h || exit 1
-fi
+done | $SED -n -e 's/" *"//g;/^#/d;t no;:no;s/"/"/p;t;s/\( [AB] \).*/\1 " "/p'|\
+  sort -s | $SED -n -e 's/ A / /;t pair;h;s/\([^ ]*\).*/\1 " "/;x' \
+  -e 'b single;:pair;h;n;:single;s/[^ ]* B //;H;g;s/\n/ /;p' | \
+  brun mkflags > "$GENDIR"/flags.h || exit 1
 
 # Extract global structure definitions and flag definitions from toys/*/*.c
 
@@ -187,7 +173,7 @@ fi
   echo "} this;"
 } > "$GENDIR"/globals.h || exit 1
 
-# Recreate tags.h
+# Create tags.h
 $SED -ne '/TAGGED_ARRAY(/,/^)/{s/.*TAGGED_ARRAY[(]\([^,]*\),/\1/p' \
   -e 's/[^{]*{"\([^"]*\)"[^{]*/ _\1/gp}' toys/*/*.c | tr '[:punct:]' _ | \
 while read i; do
@@ -214,7 +200,6 @@ else
   rm -f "$GENDIR"/zhelp.h
 fi
 
-[ -z "$DIDNEWER" ] || echo }
 [ -n "$NOBUILD" ] && exit 0
 
 echo "Compile $OUTNAME"
