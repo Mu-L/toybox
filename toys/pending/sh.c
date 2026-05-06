@@ -3939,7 +3939,6 @@ static void run_lines(void)
     s = *TT.ff->pl->arg->v;
     ss = TT.ff->pl->arg->v[1];
 if (DEBUG) dprintf(2, "%d s=%s ss=%s ctl=%s type=%d pl=%p ff=%p\n", getpid(), (TT.ff->pl->type == 'F') ? ((struct sh_function *)s)->name : s, ss, ctl, TT.ff->pl->type, TT.ff->pl, TT.ff);
-    if (!pplist) TT.hfd = 10;
 
     if (TT.ff->pl->type<2) {
       // skip disabled blocks
@@ -4501,6 +4500,7 @@ if (DEBUG) { dprintf(2, "%d main", getpid()); for (unsigned uu = 0; toys.argv[uu
   signify(SIGPIPE, 0);
   TT.options = (toys.optflags&0xff)|OPT_B;
   TT.pid = getpid();
+  TT.hfd = 10;
   srandom(TT.SECONDS = millitime());
 
   // TODO euid stuff?
