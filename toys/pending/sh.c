@@ -2810,7 +2810,7 @@ notfd:
   if (j==arg->c) return 0;
   if (s) syntax_err(s);
 
-qfail:
+qfail: // jump here instead of break to skip syntax_err()
   free(cv);
   unredirect(&pp->urd);
 
@@ -2932,11 +2932,11 @@ static void sh_exec(char **argv)
 }
 
 // Execute a single command at TT.ff->pl returning new sh_process instance.
-static struct sh_process *run_command(void)
+static struct sh_process *run_command(int local)
 {
   char *s, *ss;
   struct sh_arg *arg = TT.ff->pl->arg, prefix = {0};
-  int skiplen = 0, funk, ii, jj, local = TT.ff->blk->pipe;
+  int skiplen = 0, funk, ii, jj;
   struct sh_process *pp = xzalloc(sizeof(*pp));
 
   // Setup function and child process contexts
@@ -2961,6 +2961,7 @@ static struct sh_process *run_command(void)
     if (anystart(skip_redir_prefix(s = arg->v[ii]), (void *)redirectors)) {
       if ((skiplen = ii)<(jj = arg->c)) ii++;
       arg->c = ii+1;
+      // TODO should expand_redir() understand 1-skiplen to avoid arg->c swap?
       expand_redir(pp, arg, skiplen);
       arg->c = jj;
       skiplen = 0;
@@ -3933,6 +3934,7 @@ static void run_lines(void)
       end_fcall();
 // TODO can we move advance logic to start of loop to avoid straddle?
       if (!TT.ff || !TT.ff->pl) break;
+      // if returning from signal handler, retry interrupted command
       if (!i) goto advance;
     }
 
@@ -3978,11 +3980,11 @@ if (DEBUG) dprintf(2, "%d s=%s ss=%s ctl=%s type=%d pl=%p ff=%p\n", getpid(), (T
       unredirect(&TT.ff->blk->urd);
       TT.ff->blk->pipe = 0;
 
-      // Consume pipe from previous segment as stdin.
+      // if | into us, consume saved output pipe from previous segment as stdin.
       if (TT.ff->blk->pout != -1) {
         TT.ff->blk->pipe++;
         if (save_redirect(&TT.ff->blk->urd, TT.ff->blk->pout, 0)) break;
-        close(TT.ff->blk->pout);
+        if (TT.ff->blk->pout) close(TT.ff->blk->pout);
         TT.ff->blk->pout = -1;
       }
 
@@ -4010,7 +4012,7 @@ if (DEBUG) dprintf(2, "%d s=%s ss=%s ctl=%s type=%d pl=%p ff=%p\n", getpid(), (T
 
     // If executable segment parse and run next command saving resulting process
     if (!TT.ff->pl->type) {
-      dlist_add_nomalloc((void *)&pplist, (void *)run_command());
+      dlist_add_nomalloc((void *)&pplist, (void *)run_command(TT.ff->blk->pipe));
 
     // Start of flow control block?
     } else if (TT.ff->pl->type == 1) {
