@@ -2644,7 +2644,7 @@ static int expand_redir(struct sh_process *pp, struct sh_arg *arg, int skip)
       int new = pipe_subshell(s+2, strlen(s+2)-1, *s == '>');
 
       // Grab subshell data
-      if (new == -1) return pp->exit = 1;
+      if (new == -1) goto qfail;
       save_redirect(&pp->urd, -2, new);
 
       // bash uses /dev/fd/%d which requires /dev/fd to be a symlink to
@@ -2659,7 +2659,7 @@ static int expand_redir(struct sh_process *pp, struct sh_arg *arg, int skip)
     sss = ss + anystart(ss, (void *)redirectors);
     if (ss == sss) {
       // Nope: save/expand argument and loop
-      if (expand_arg(&pp->arg, s, 0, &pp->delete)) return pp->exit = 1;
+      if (expand_arg(&pp->arg, s, 0, &pp->delete)) goto qfail;
       continue;
     } else if (j+1 >= arg->c) {
       // redirect needs one argument
@@ -2806,14 +2806,15 @@ notfd:
     if (bad) break;
   }
 
-  // didn't parse everything?
-  if (j != arg->c) {
-    if (s) syntax_err(s);
-    if (!pp->exit) pp->exit = 1;
-    free(cv);
-  }
+  // Parsed everything?
+  if (j==arg->c) return 0;
+  if (s) syntax_err(s);
 
-  return 0;
+qfail:
+  free(cv);
+  unredirect(&pp->urd);
+
+  return pp->exit ? : ++pp->exit;
 }
 
 // Handler called with all signals blocked, so no special locking needed.
@@ -3931,7 +3932,8 @@ static void run_lines(void)
       i = TT.ff->signal;
       end_fcall();
 // TODO can we move advance logic to start of loop to avoid straddle?
-      if (!i || !TT.ff || !TT.ff->pl) goto advance;
+      if (!TT.ff || !TT.ff->pl) break;
+      if (!i) goto advance;
     }
 
     // grab first arg, second arg, and ending control character (ala ; or |)
@@ -4039,9 +4041,7 @@ if (DEBUG) dprintf(2, "%d s=%s ss=%s ctl=%s type=%d pl=%p ff=%p\n", getpid(), (T
         if (!(pp->pid = run_subshell(0, -1))) {
           // zap forked child's cleanup context and advance to next statement
           pplist = 0;
-          while (TT.ff->blk->next) TT.ff->blk = TT.ff->blk->next;
-          TT.ff->blk->pout = -1;
-          TT.ff->blk->urd = 0;
+          clear_block(TT.ff->blk);
           TT.ff->pl = TT.ff->next->pl->next;
 
           continue;
@@ -4256,8 +4256,8 @@ do_then:
       } else toys.exitval = wait_pipeline(pplist);
       pplist = 0;
     }
-advance:
     if (!TT.ff || !TT.ff->pl) break;
+advance:
     // for && and || skip pipeline segment(s) based on return code
     if (!TT.ff->pl->type || TT.ff->pl->type == 3) {
       for (;;) {
