@@ -3137,29 +3137,29 @@ static int parse_line(char *line, struct double_list **expect)
       arg->v[arg->c] = 0;
 
     // is a HERE document in progress?
-    } else if (pl->count != pl->here) {
-here_loop:
+    } else if (pl->count != pl->here) while (start) {
       // Back up to oldest unfinished pipeline segment.
       while (pl!=TT.ff->pl && pl->prev->count != pl->prev->here) pl = pl->prev;
       arg = pl->arg+1+pl->here;
 
       // Match unquoted EOF.
-      if (!line) {
-        sherror_msg("<<%s EOF", arg->v[arg->c]);
-        goto here_end;
-      }
-      for (s = line, end = arg->v[arg->c]; *end; s++, end++) {
-        end += strspn(end, "\\\"'\n");
-        if (!*s || *s != *end) break;
+      if (!line) sherror_msg("<<%s EOF", arg->v[arg->c]), end = 0;
+      else {
+        for (i = 0, s = line, end = arg->v[arg->c]; *end; s++, end++) {
+          i |= (j = strspn(end, "\\\"'\n"));
+          end += j;
+          if (!*s || *s != *end) break;
+        }
+
+        // Add this line, else EOF hit so end HERE document
+        if ((*s && *s!='\n') || *end) {
+          end = arg->v[arg->c];
+          arg_add(arg, xstrdup(line));
+          arg->v[arg->c] = end;
+        } else end = 0;
       }
 
-      // Add this line, else EOF hit so end HERE document
-      if ((*s && *s!='\n') || *end) {
-        end = arg->v[arg->c];
-        arg_add(arg, xstrdup(line));
-        arg->v[arg->c] = end;
-      } else {
-here_end:
+      if (!end) {
         // End segment and advance/consume bridge segments
         arg->v[arg->c] = 0;
         if (pl->count == ++pl->here)
@@ -3167,7 +3167,7 @@ here_end:
             pl->here = pl->count;
       }
       if (pl->here != pl->count) {
-        if (!line) goto here_loop;
+        if (!line) continue;
         else return 1;
       }
       start = 0;
