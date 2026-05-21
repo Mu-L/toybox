@@ -284,7 +284,7 @@ get_target_config()
     [ "$CROSS" = riscv32 ] && KCONF+=,ARCH_RV32I
   elif [ "$CROSS" = s390x ]; then
     KARCH=s390 VMLINUX=bzImage
-    KCONF="$(be2csv MARCH_Z900 PACK_STACK S390_GUEST VIRTIO_{NET,BLK} \
+    KCONF="$(be2csv MARCH_Z900 S390_GUEST VIRTIO_{NET,BLK} \
       SCLP_VT220_{TTY,CONSOLE})"
   elif [ "$CROSS" == sh2eb ]; then
     BUILTIN=1 KARCH=sh
